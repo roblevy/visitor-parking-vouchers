@@ -27,6 +27,8 @@ arg_parser = argparse.ArgumentParser(
             In any case, you will be repeatedly asked if you want to
             activate vouchers for the days following today, until you
             press Ctrl+C.
+
+            To see which vouchers are currently active, use `--report`
             """
         )
     )
@@ -34,6 +36,7 @@ arg_parser = argparse.ArgumentParser(
 group = arg_parser.add_mutually_exclusive_group(required=False)
 group.add_argument("date", type=date.fromisoformat, nargs="?")
 group.add_argument("--tomorrow", action="store_true")
+group.add_argument("--report", action="store_true")
 args = arg_parser.parse_args()
 
 # Environment variables
@@ -68,6 +71,17 @@ response = session.post(
 response.raise_for_status()
 
 
+def report():
+    response = session.get(VOUCHERS_URL)
+    for grid in BeautifulSoup(response.text, "html.parser").select(".k-grid"):
+        headers = grid.select_one(".k-grid-header").select(".k-header .k-link")
+        headers = [header.text for header in headers]
+        for row in grid.select(".k-master-row"):
+            print("\n===========")
+            for i, cell in enumerate(row.select("td")):
+                print(f"{headers[i]:.<40} {cell.text}")
+
+
 def activate_vouchers(on_date: date):
     date_string = on_date.strftime("%d/%m/%Y")
     voucher_purchase_data = {
@@ -98,6 +112,10 @@ def activate_vouchers(on_date: date):
     )
     response.raise_for_status()
 
+
+if args.report:
+    report()
+    exit()
 
 current_date = args.date
 
