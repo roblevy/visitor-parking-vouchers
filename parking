@@ -1,0 +1,113 @@
+#! python3
+import argparse
+import os
+from datetime import date, timedelta
+from textwrap import dedent
+
+import requests
+from bs4 import BeautifulSoup
+
+BASE_URL = "https://haringey.tarantopermits.com"
+LOGIN_URL = BASE_URL + "/Permits/Account/Login"
+VOUCHERS_URL = BASE_URL + "/Permits/Permits/BuyUseVouchers"
+
+arg_parser = argparse.ArgumentParser(
+    description=(
+        dedent(
+            """
+            Haringey visitor voucher purchasing assistant.
+
+            Either specify a date:
+
+            $ ./parking 2020-01-01
+            $ ./parking --tomorrow
+
+            Or, to activate for today, leave the date blank.
+
+            In any case, you will be repeatedly asked if you want to
+            activate vouchers for the days following today, until you
+            press Ctrl+C.
+            """
+        )
+    )
+)
+group = arg_parser.add_mutually_exclusive_group(required=False)
+group.add_argument("date", type=date.fromisoformat, nargs="?")
+group.add_argument("--tomorrow", action="store_true")
+args = arg_parser.parse_args()
+
+# Environment variables
+USERNAME = os.environ["HARINGEY_USERNAME"]
+PASSWORD = os.environ["HARINGEY_PASSWORD"]
+CAR_REG = os.environ["HARINGEY_CAR_REG"]
+
+session = requests.Session()
+print("Get login page...")
+response = session.get(LOGIN_URL)
+response.raise_for_status()
+
+token = ""
+for input_element in BeautifulSoup(response.text, "html.parser").find_all("input"):
+    if not input_element.has_attr("name"):
+        continue
+    if input_element.attrs["name"] == "__RequestVerificationToken":
+        token = input_element.attrs["value"]
+
+if not token:
+    raise ValueError("No token found from initial request")
+
+print("Send login data")
+response = session.post(
+    LOGIN_URL,
+    data={
+        "Username": USERNAME,
+        "Password": PASSWORD,
+        "__RequestVerificationToken": token,
+    },
+)
+response.raise_for_status()
+
+
+def activate_vouchers(on_date: date):
+    date_string = on_date.strftime("%d/%m/%Y")
+    voucher_purchase_data = {
+        "Action": "Activate",
+        "Reference": "",
+        "Code": "0",
+        "VouchersAvailable.ActivatingPermit": "1",
+        "VouchersAvailable.BuyString": "1",
+        "VouchersAvailable.EndDateOnly": f"{date_string} 00:00:00",
+        "VouchersAvailable.EndDateTime": f"{date_string} 16:00",
+        "VouchersAvailable.SelectedLocation": "Bruce Grove West (BGW)",
+        "VouchersAvailable.SelectedVRM": "RE53YWO",
+        "VouchersAvailable.StartDateOnly": f"{date_string} 00:00:00",
+        "VouchersAvailable.StartDateTime": f"{date_string} 14:00",
+        "VouchersAvailable.IsVisitorActivation": "False",
+        "VouchersPrePaid.BuyString": "",
+        "VouchersPrePaid.FormPreReadPermitReferences": "",
+        "VouchersPrePaid.PermitCount": "2",
+        "VoucherPreRequisiteMessage": "Unfortunately, you do not qualify to buy visitor / short stay voucher permits – only qualified residents and some Essential Service customers are eligible.  Please visit our website for details.",
+        "hdnBuyingTandCPermitType": "",
+        "hdnMustReadAll": "0",
+        "chkTandCAccept": "false",
+    }
+    print(f"Activating vouchers for {date_string}")
+    response = session.post(
+        VOUCHERS_URL,
+        data=voucher_purchase_data,
+    )
+    response.raise_for_status()
+
+
+current_date = args.date
+
+if not current_date:
+    current_date = date.today()
+
+if args.tomorrow:
+    current_date += timedelta(days=1)
+
+while True:
+    input(f"[{current_date}] Press Enter to activate vouchers (Ctrl+C to quit) ")
+    activate_vouchers(current_date)
+    current_date += timedelta(days=1)
